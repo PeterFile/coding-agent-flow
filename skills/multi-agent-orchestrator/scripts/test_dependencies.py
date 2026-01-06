@@ -13,6 +13,7 @@ from spec_parser import (
     get_ready_tasks,
     topological_sort,
     DependencyGraph,
+    MissingDependencyError,
 )
 
 
@@ -115,9 +116,10 @@ def test_topological_sort():
     
     result = parse_tasks(content)
     extract_dependencies(result.tasks)
-    sorted_tasks, errors = topological_sort(result.tasks)
+    sorted_tasks, circular_errors, missing_errors = topological_sort(result.tasks)
     
-    assert len(errors) == 0
+    assert len(circular_errors) == 0
+    assert len(missing_errors) == 0
     positions = {t.task_id: i for i, t in enumerate(sorted_tasks)}
     
     assert positions["1"] < positions["2"]
@@ -126,6 +128,38 @@ def test_topological_sort():
     assert positions["3"] < positions["4"]
     
     print(f"  ✅ Order: {[t.task_id for t in sorted_tasks]}")
+
+
+def test_missing_dependency_detection():
+    """Test that missing dependencies are detected and cause failure."""
+    print("Testing missing dependency detection...")
+    
+    content = """# Tasks
+
+- [ ] 1 First task
+- [ ] 2 Second task
+  - dependencies: 1, 99
+- [ ] 3 Third task
+  - dependencies: 100
+"""
+    
+    result = parse_tasks(content)
+    dep_result = extract_dependencies(result.tasks)
+    
+    # Should be invalid due to missing dependencies
+    assert not dep_result.valid
+    assert len(dep_result.missing_dependencies) > 0
+    assert "2" in dep_result.missing_dependencies
+    assert "99" in dep_result.missing_dependencies["2"]
+    assert "3" in dep_result.missing_dependencies
+    assert "100" in dep_result.missing_dependencies["3"]
+    
+    # topological_sort should fail fast
+    sorted_tasks, circular_errors, missing_errors = topological_sort(result.tasks)
+    assert len(sorted_tasks) == 0
+    assert len(missing_errors) > 0
+    
+    print(f"  ✅ Detected missing deps: {dep_result.missing_dependencies}")
 
 
 def test_get_ready_tasks():
@@ -167,6 +201,7 @@ if __name__ == "__main__":
         test_circular_dependency_detection,
         test_no_circular_dependency,
         test_topological_sort,
+        test_missing_dependency_detection,
         test_get_ready_tasks,
     ]
     

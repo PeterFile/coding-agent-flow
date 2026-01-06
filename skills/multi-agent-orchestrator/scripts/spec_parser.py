@@ -116,6 +116,16 @@ class CircularDependencyError:
 
 
 @dataclass
+class MissingDependencyError:
+    """Represents a missing dependency error"""
+    task_id: str
+    missing: List[str]
+    
+    def __str__(self):
+        return f"Task {self.task_id} has missing dependencies: {', '.join(self.missing)}"
+
+
+@dataclass
 class DependencyResult:
     """Result of dependency extraction"""
     graph: DependencyGraph
@@ -124,7 +134,13 @@ class DependencyResult:
     
     @property
     def valid(self) -> bool:
-        return len(self.circular_dependencies) == 0
+        """Valid if no circular dependencies AND no missing dependencies"""
+        return len(self.circular_dependencies) == 0 and len(self.missing_dependencies) == 0
+    
+    def get_missing_dependency_errors(self) -> List[MissingDependencyError]:
+        """Convert missing_dependencies dict to list of MissingDependencyError"""
+        return [MissingDependencyError(task_id=tid, missing=deps) 
+                for tid, deps in self.missing_dependencies.items()]
 
 
 # Task status markers in tasks.md
@@ -370,12 +386,19 @@ def get_ready_tasks(tasks: List[Task], completed_ids: Set[str]) -> List[Task]:
     return ready
 
 
-def topological_sort(tasks: List[Task]) -> Tuple[List[Task], List[CircularDependencyError]]:
-    """Sort tasks in topological order based on dependencies."""
+def topological_sort(tasks: List[Task]) -> Tuple[List[Task], List[CircularDependencyError], List[MissingDependencyError]]:
+    """
+    Sort tasks in topological order based on dependencies.
+    
+    Returns:
+        Tuple of (sorted_tasks, circular_errors, missing_errors)
+        - If any errors exist, sorted_tasks will be empty
+    """
     dep_result = extract_dependencies(tasks)
     
+    # Fail fast on invalid dependencies (circular or missing)
     if not dep_result.valid:
-        return [], dep_result.circular_dependencies
+        return [], dep_result.circular_dependencies, dep_result.get_missing_dependency_errors()
     
     task_map = {t.task_id: t for t in tasks}
     in_degree = {t.task_id: len(t.dependencies) for t in tasks}
@@ -395,7 +418,7 @@ def topological_sort(tasks: List[Task]) -> Tuple[List[Task], List[CircularDepend
                 if in_degree[task.task_id] == 0:
                     queue.append(task.task_id)
     
-    return sorted_tasks, []
+    return sorted_tasks, [], []
 
 
 def load_tasks_from_spec(spec_path: str) -> Tuple[TasksParseResult, ValidationResult]:
