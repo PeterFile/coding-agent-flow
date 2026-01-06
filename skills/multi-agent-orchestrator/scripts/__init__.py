@@ -2,6 +2,7 @@
 Multi-Agent Orchestrator Scripts
 
 Parses tasks.md for orchestration. Agent reads requirements.md and design.md directly.
+Provides initialization, batch dispatch, and review dispatch functionality.
 """
 
 from .spec_parser import (
@@ -23,7 +24,37 @@ from .spec_parser import (
     load_tasks_from_spec,
 )
 
+from .init_orchestration import (
+    TaskEntry,
+    AgentState,
+    InitResult,
+    initialize_orchestration,
+    assign_owner_agent,
+    determine_criticality,
+    convert_task_to_entry,
+)
+
+from .dispatch_batch import (
+    TaskConfig,
+    ExecutionReport,
+    DispatchResult,
+    dispatch_batch,
+    get_ready_tasks as get_ready_tasks_from_state,
+    build_task_configs,
+)
+
+from .dispatch_reviews import (
+    ReviewTaskConfig,
+    ReviewReport,
+    ReviewDispatchResult,
+    dispatch_reviews,
+    get_tasks_pending_review,
+    get_review_count,
+    build_review_configs,
+)
+
 __all__ = [
+    # spec_parser
     "Task",
     "TaskType",
     "TaskStatus",
@@ -40,4 +71,27 @@ __all__ = [
     "get_ready_tasks",
     "topological_sort",
     "load_tasks_from_spec",
+    # init_orchestration
+    "TaskEntry",
+    "AgentState",
+    "InitResult",
+    "initialize_orchestration",
+    "assign_owner_agent",
+    "determine_criticality",
+    "convert_task_to_entry",
+    # dispatch_batch
+    "TaskConfig",
+    "ExecutionReport",
+    "DispatchResult",
+    "dispatch_batch",
+    "get_ready_tasks_from_state",
+    "build_task_configs",
+    # dispatch_reviews
+    "ReviewTaskConfig",
+    "ReviewReport",
+    "ReviewDispatchResult",
+    "dispatch_reviews",
+    "get_tasks_pending_review",
+    "get_review_count",
+    "build_review_configs",
 ]

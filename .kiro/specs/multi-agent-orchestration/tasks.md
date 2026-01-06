@@ -114,26 +114,26 @@ This implementation plan extends the existing codeagent-wrapper with tmux visual
 - [x] 7. Checkpoint - Ensure spec parser tests pass
   - Ensure all tests pass, ask the user if questions arise.
 
-- [ ] 8. Create Codex Orchestrator Skill
-  - [ ] 8.1 Create skill directory structure
+- [x] 8. Create Codex Orchestrator Skill
+  - [x] 8.1 Create skill directory structure
     - Create skills/multi-agent-orchestrator/
     - Create SKILL.md with name, description, trigger conditions
     - Create scripts/ and references/ directories
     - _Requirements: 10.1, 10.3, 10.4_
 
-  - [ ] 8.2 Implement orchestrator initialization script
+  - [x] 8.2 Implement orchestrator initialization script
     - Create scripts/init_orchestration.py
     - Parse spec directory and validate files
     - Initialize AGENT_STATE.json with tasks from tasks.md
     - Initialize PROJECT_PULSE.md with mental model from design.md
     - _Requirements: 11.2, 11.4, 11.5, 11.6, 11.8_
 
-  - [ ] 8.3 Write property tests for initialization
+  - [x] 8.3 Write property tests for initialization
     - **Property 2: Agent Assignment by Task Type**
     - **Property 3: Dependency-Based Blocking**
     - **Validates: Requirements 1.3, 1.7, 11.5**
 
-  - [ ] 8.4 Implement batch dispatch logic
+  - [x] 8.4 Implement batch dispatch logic
     - Create scripts/dispatch_batch.py
     - Collect ready tasks (no unmet dependencies)
     - Build task config for codeagent-wrapper --parallel
@@ -141,20 +141,20 @@ This implementation plan extends the existing codeagent-wrapper with tmux visual
     - Process Execution Report
     - _Requirements: 1.3, 1.4, 9.1, 9.3, 9.4, 9.10_
 
-  - [ ] 8.5 Implement review dispatch logic
+  - [x] 8.5 Implement review dispatch logic
     - Create scripts/dispatch_reviews.py
     - Identify tasks in pending_review status
     - Build review task config with codex backend
     - Invoke codeagent-wrapper for review batch
     - _Requirements: 8.1, 8.2, 8.3, 8.4_
 
-  - [ ] 8.6 Write property tests for review dispatch
+  - [x] 8.6 Write property tests for review dispatch
     - **Property 8: Review Count by Criticality**
     - **Property 9: Review Pane Placement**
     - **Validates: Requirements 8.2, 8.5, 8.6**
 
-- [ ] 9. Implement sync_pulse and dual-document management
-  - [ ] 9.1 Create scripts/sync_pulse.py
+- [x] 9. Implement sync_pulse and dual-document management
+  - [x] 9.1 Create scripts/sync_pulse.py
     - Read AGENT_STATE.json
     - Update PROJECT_PULSE.md Mental Model section
     - Update Narrative Delta with recent completions
@@ -163,23 +163,23 @@ This implementation plan extends the existing codeagent-wrapper with tmux visual
     - _Requirements: 6.1, 6.3, 6.4, 6.6_
     - **Note: Reference implementation exists in skills/agent-pulse-coordination/scripts/sync_pulse.py**
 
-  - [ ] 9.2 Write property tests for sync_pulse
+  - [x] 9.2 Write property tests for sync_pulse
     - **Property 12: Dual Document Synchronization**
     - **Property 15: Blocked Task Has Blocked Item Entry**
     - **Validates: Requirements 6.3, 3.5, 9.6**
 
-  - [ ] 9.3 Implement review consolidation
+  - [x] 9.3 Implement review consolidation
     - Create scripts/consolidate_reviews.py
     - Collect all review findings for a task
     - Generate Final Report with overall severity
     - Update AGENT_STATE.json final_reports
     - _Requirements: 8.9_
 
-  - [ ] 9.4 Write property tests for review consolidation
+  - [x] 9.4 Write property tests for review consolidation
     - **Property 10: Review Completion Triggers Consolidation**
     - **Validates: Requirements 8.9**
 
-- [ ] 10. Checkpoint - Ensure all skill scripts work
+- [x] 10. Checkpoint - Ensure all skill scripts work
   - Ensure all tests pass, ask the user if questions arise.
 
 - [ ] 11. Create custom prompts for Codex
