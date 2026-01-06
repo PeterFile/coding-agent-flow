@@ -257,7 +257,7 @@ codeagent-wrapper \
 
 ### 1. Spec Parser
 
-Parses Kiro-generated spec files and extracts task definitions.
+Parses tasks.md to extract task definitions. Agent reads requirements.md and design.md directly when executing tasks.
 
 ```python
 # Pseudocode
@@ -265,24 +265,26 @@ class SpecParser:
     def parse_tasks(tasks_md_path: str) -> List[Task]:
         """
         Parse tasks.md and extract task definitions.
-        Returns list of Task objects with id, description, dependencies, type, criticality.
-        """
-        
-    def parse_requirements(requirements_md_path: str) -> Requirements:
-        """
-        Parse requirements.md for reference during execution.
-        """
-        
-    def parse_design(design_md_path: str) -> Design:
-        """
-        Parse design.md for architecture context and mental model.
+        Returns list of Task objects with id, description, dependencies, type.
         """
         
     def validate_spec_directory(spec_path: str) -> ValidationResult:
         """
-        Validate that all required spec files exist and are parseable.
+        Validate that all required spec files exist (tasks.md, requirements.md, design.md).
+        """
+    
+    def extract_dependencies(tasks: List[Task]) -> DependencyGraph:
+        """
+        Build dependency graph from tasks and detect circular dependencies.
+        """
+    
+    def get_ready_tasks(tasks: List[Task], completed: Set[str]) -> List[Task]:
+        """
+        Get tasks ready to execute (all dependencies satisfied).
         """
 ```
+
+**Note**: Agent reads requirements.md and design.md directly during task execution. No parsing needed - just validate files exist.
 
 ### 2. Orchestrator (Codex)
 

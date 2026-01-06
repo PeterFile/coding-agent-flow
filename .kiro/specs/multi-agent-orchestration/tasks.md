@@ -66,13 +66,13 @@ This implementation plan extends the existing codeagent-wrapper with tmux visual
     - **Property 18: Tmux Pane Creation for Dependent Tasks**
     - **Validates: Requirements 5.2, 5.3, 5.4**
 
-  - [ ] 3.5 Implement Execution Report generation
+  - [x] 3.5 Implement Execution Report generation
     - Generate structured JSON report after all tasks complete
     - Include task results, files changed, coverage, test results
     - Return report to caller synchronously
     - _Requirements: 9.2, 12.8_
 
-- [ ] 4. Checkpoint - Ensure codeagent-wrapper builds and tests pass
+- [x] 4. Checkpoint - Ensure codeagent-wrapper builds and tests pass
   - Ensure all tests pass, ask the user if questions arise.
 
 - [x] 5. Implement State Manager and validation
@@ -94,25 +94,24 @@ This implementation plan extends the existing codeagent-wrapper with tmux visual
     - **Property 14: Criticality Enum Validity**
     - **Validates: Requirements 7.1, 7.2, 7.3, 7.4, 7.5, 7.6, 7.7, 7.8**
 
-- [ ] 6. Implement Spec Parser
-  - [ ] 6.1 Create spec_parser.py
+- [x] 6. Implement Spec Parser
+  - [x] 6.1 Create spec_parser.py
     - Implement parse_tasks() to extract tasks from tasks.md
-    - Implement parse_requirements() for requirements.md
-    - Implement parse_design() for design.md mental model
     - Implement validate_spec_directory() to check all files exist
-    - _Requirements: 1.1, 1.2, 11.2, 11.3_
+    - Agent reads requirements.md and design.md directly when executing tasks
+    - _Requirements: 1.2, 11.2, 11.3_
 
-  - [ ] 6.2 Write property tests for Spec Parser
+  - [x] 6.2 Write property tests for Spec Parser
     - **Property 1: Task Parsing Round-Trip Consistency**
     - **Validates: Requirements 1.2, 11.3, 11.4**
 
-  - [ ] 6.3 Implement task dependency extraction
+  - [x] 6.3 Implement task dependency extraction
     - Parse dependency markers from tasks.md
     - Build dependency graph
     - Detect circular dependencies
     - _Requirements: 11.3, 11.7_
 
-- [ ] 7. Checkpoint - Ensure spec parser tests pass
+- [x] 7. Checkpoint - Ensure spec parser tests pass
   - Ensure all tests pass, ask the user if questions arise.
 
 - [ ] 8. Create Codex Orchestrator Skill
