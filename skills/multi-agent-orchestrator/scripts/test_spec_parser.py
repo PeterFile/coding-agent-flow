@@ -622,3 +622,228 @@ def test_property_3_dependency_expansion_ready_waits_for_all_subtasks(hierarchy)
     ready = get_ready_tasks(all_tasks, all_completed)
     ready_ids = {t.task_id for t in ready}
     assert "99" in ready_ids, "Dependent should be ready when all subtasks completed"
+
+
+# ============================================================================
+# Property Tests for File Manifest Parsing
+# Feature: orchestration-fixes
+# ============================================================================
+
+from spec_parser import _extract_file_manifest
+
+
+@st.composite
+def file_path_strategy(draw):
+    """Generate valid file paths."""
+    # Generate path components
+    dirs = draw(st.lists(
+        st.text(alphabet=string.ascii_lowercase + string.digits + "_-", min_size=1, max_size=15),
+        min_size=0,
+        max_size=3
+    ))
+    
+    # Generate filename
+    name = draw(st.text(alphabet=string.ascii_lowercase + string.digits + "_-", min_size=1, max_size=15))
+    ext = draw(st.sampled_from([".py", ".js", ".ts", ".json", ".md", ".txt", ".go", ".yaml"]))
+    
+    filename = name + ext
+    
+    if dirs:
+        return "/".join(dirs) + "/" + filename
+    return filename
+
+
+@st.composite
+def file_manifest_strategy(draw):
+    """Generate task details with file manifest markers."""
+    # Generate writes list
+    num_writes = draw(st.integers(min_value=0, max_value=5))
+    writes = [draw(file_path_strategy()) for _ in range(num_writes)]
+    writes = list(dict.fromkeys(writes))  # Remove duplicates
+    
+    # Generate reads list
+    num_reads = draw(st.integers(min_value=0, max_value=5))
+    reads = [draw(file_path_strategy()) for _ in range(num_reads)]
+    reads = list(dict.fromkeys(reads))  # Remove duplicates
+    
+    # Build details list
+    details = []
+    
+    # Add some regular details
+    num_regular = draw(st.integers(min_value=0, max_value=3))
+    for _ in range(num_regular):
+        detail = draw(st.text(alphabet=string.ascii_letters + string.digits + " -_.,", min_size=5, max_size=50))
+        if detail.strip():
+            details.append(detail)
+    
+    # Add writes marker if there are writes
+    if writes:
+        writes_str = ", ".join(writes)
+        details.append(f"_writes: {writes_str}")
+    
+    # Add reads marker if there are reads
+    if reads:
+        reads_str = ", ".join(reads)
+        details.append(f"_reads: {reads_str}")
+    
+    # Shuffle details to test order independence
+    draw(st.randoms()).shuffle(details)
+    
+    return {
+        "details": details,
+        "expected_writes": writes,
+        "expected_reads": reads,
+    }
+
+
+@given(data=file_manifest_strategy())
+@settings(max_examples=100, deadline=None)
+def test_property_4_file_manifest_parsing_round_trip(data):
+    """
+    Property 4: File Manifest Parsing Round-Trip
+    
+    For any task details containing _writes: and _reads: markers,
+    _extract_file_manifest SHALL correctly extract all file paths.
+    
+    Feature: orchestration-fixes, Property 4
+    Validates: Requirements 2.2
+    """
+    details = data["details"]
+    expected_writes = set(data["expected_writes"])
+    expected_reads = set(data["expected_reads"])
+    
+    # Extract file manifest
+    writes, reads = _extract_file_manifest(details)
+    
+    # Verify writes match
+    assert set(writes) == expected_writes, \
+        f"Expected writes {expected_writes}, got {set(writes)}"
+    
+    # Verify reads match
+    assert set(reads) == expected_reads, \
+        f"Expected reads {expected_reads}, got {set(reads)}"
+
+
+@st.composite
+def task_with_manifest_md_strategy(draw):
+    """Generate tasks.md content with file manifests."""
+    task_id = draw(task_id_strategy())
+    description = draw(task_description_strategy())
+    manifest = draw(file_manifest_strategy())
+    
+    # Build task markdown
+    lines = [
+        "# Tasks",
+        "",
+        f"- [ ] {task_id} {description}",
+    ]
+    
+    # Add details as sub-bullets
+    for detail in manifest["details"]:
+        lines.append(f"  - {detail}")
+    
+    lines.append("")
+    
+    return {
+        "content": "\n".join(lines),
+        "task_id": task_id,
+        "expected_writes": manifest["expected_writes"],
+        "expected_reads": manifest["expected_reads"],
+    }
+
+
+@given(data=task_with_manifest_md_strategy())
+@settings(max_examples=100, deadline=None)
+def test_property_4_file_manifest_in_parsed_task(data):
+    """
+    Property 4: File Manifest in Parsed Task
+    
+    For any tasks.md with file manifest markers, parse_tasks SHALL
+    populate the writes and reads fields of the Task object.
+    
+    Feature: orchestration-fixes, Property 4
+    Validates: Requirements 2.2
+    """
+    result = parse_tasks(data["content"])
+    
+    assert result.success, f"Parse failed: {result.errors}"
+    assert len(result.tasks) >= 1, "Expected at least one task"
+    
+    # Find the task
+    task = next((t for t in result.tasks if t.task_id == data["task_id"]), None)
+    assert task is not None, f"Task {data['task_id']} not found"
+    
+    # Verify writes and reads
+    assert set(task.writes) == set(data["expected_writes"]), \
+        f"Expected writes {data['expected_writes']}, got {task.writes}"
+    assert set(task.reads) == set(data["expected_reads"]), \
+        f"Expected reads {data['expected_reads']}, got {task.reads}"
+
+
+@given(details=st.lists(st.text(min_size=0, max_size=100), min_size=0, max_size=10))
+@settings(max_examples=100, deadline=None)
+def test_property_4_file_manifest_no_markers_empty(details):
+    """
+    Property 4: File Manifest - No markers returns empty lists
+    
+    For any task details without _writes: or _reads: markers,
+    _extract_file_manifest SHALL return empty lists.
+    
+    Feature: orchestration-fixes, Property 4
+    Validates: Requirements 2.2
+    """
+    # Filter out any details that accidentally contain markers
+    filtered_details = [
+        d for d in details 
+        if not d.strip().lower().startswith('_writes:') 
+        and not d.strip().lower().startswith('_reads:')
+    ]
+    
+    writes, reads = _extract_file_manifest(filtered_details)
+    
+    assert writes == [], f"Expected empty writes, got {writes}"
+    assert reads == [], f"Expected empty reads, got {reads}"
+
+
+@st.composite
+def multiple_manifest_markers_strategy(draw):
+    """Generate details with multiple _writes: or _reads: markers."""
+    # Generate two sets of files
+    files1 = [draw(file_path_strategy()) for _ in range(draw(st.integers(min_value=1, max_value=3)))]
+    files2 = [draw(file_path_strategy()) for _ in range(draw(st.integers(min_value=1, max_value=3)))]
+    
+    # Create details with multiple markers
+    details = [
+        f"_writes: {', '.join(files1)}",
+        "Some other detail",
+        f"_writes: {', '.join(files2)}",
+    ]
+    
+    # All files should be collected
+    all_files = list(dict.fromkeys(files1 + files2))
+    
+    return {
+        "details": details,
+        "expected_writes": all_files,
+    }
+
+
+@given(data=multiple_manifest_markers_strategy())
+@settings(max_examples=100, deadline=None)
+def test_property_4_file_manifest_multiple_markers_combined(data):
+    """
+    Property 4: File Manifest - Multiple markers combined
+    
+    For any task details with multiple _writes: or _reads: markers,
+    _extract_file_manifest SHALL combine all file paths.
+    
+    Feature: orchestration-fixes, Property 4
+    Validates: Requirements 2.2
+    """
+    details = data["details"]
+    expected_writes = set(data["expected_writes"])
+    
+    writes, reads = _extract_file_manifest(details)
+    
+    assert set(writes) == expected_writes, \
+        f"Expected writes {expected_writes}, got {set(writes)}"

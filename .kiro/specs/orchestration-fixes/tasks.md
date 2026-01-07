@@ -41,36 +41,36 @@ Implementation uses Python for orchestration scripts (consistent with existing c
     - **Property 2: Parent Status Aggregation**
     - **Validates: Requirements 1.3, 1.4, 1.5**
 
-- [ ] 2. Checkpoint - Ensure parent-subtask model tests pass
+- [x] 2. Checkpoint - Ensure parent-subtask model tests pass
   - Ensure all tests pass, ask the user if questions arise.
 
-- [ ] 3. Implement File Conflict Detection
-  - [ ] 3.1 Add file manifest fields to Task dataclass
+- [x] 3. Implement File Conflict Detection
+  - [x] 3.1 Add file manifest fields to Task dataclass
     - Add `writes: List[str]` and `reads: List[str]` fields to Task
     - Update `to_dict()` to include new fields
     - _Requirements: 2.1_
 
-  - [ ] 3.2 Implement file manifest parsing in spec_parser.py
+  - [x] 3.2 Implement file manifest parsing in spec_parser.py
     - Add `_extract_file_manifest()` function
     - Parse `_writes:` and `_reads:` markers from task details
     - Integrate into `parse_tasks()` function
     - _Requirements: 2.2_
 
-  - [ ] 3.3 Write property test for file manifest parsing
+  - [x] 3.3 Write property test for file manifest parsing
     - **Property 4: File Manifest Parsing**
     - **Validates: Requirements 2.2**
 
-  - [ ] 3.4 Implement file conflict detection
+  - [x] 3.4 Implement file conflict detection
     - Add `FileConflict` dataclass to `dispatch_batch.py`
     - Add `detect_file_conflicts()` function
     - Add `partition_by_conflicts()` function for batch partitioning
     - _Requirements: 2.3, 2.4, 2.5, 2.6, 2.7_
 
-  - [ ] 3.5 Write property test for conflict-aware batching
+  - [x] 3.5 Write property test for conflict-aware batching
     - **Property 5: Conflict-Aware Batching**
     - **Validates: Requirements 2.3, 2.4, 2.5, 2.6**
 
-  - [ ] 3.6 Integrate conflict detection into dispatch_batch.py
+  - [x] 3.6 Integrate conflict detection into dispatch_batch.py
     - Update `dispatch_batch()` to use `partition_by_conflicts()`
     - Dispatch batches sequentially
     - Add logging for conflict warnings

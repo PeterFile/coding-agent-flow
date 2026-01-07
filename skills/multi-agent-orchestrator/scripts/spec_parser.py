@@ -43,6 +43,9 @@ class Task:
     parent_id: Optional[str] = None
     subtasks: List[str] = field(default_factory=list)
     details: List[str] = field(default_factory=list)
+    # File manifest fields for conflict detection (Requirement 2.1)
+    writes: List[str] = field(default_factory=list)
+    reads: List[str] = field(default_factory=list)
     
     def to_dict(self) -> Dict:
         """Convert to dictionary for JSON serialization"""
@@ -56,6 +59,8 @@ class Task:
             "parent_id": self.parent_id,
             "subtasks": self.subtasks,
             "details": self.details,
+            "writes": self.writes,
+            "reads": self.reads,
         }
 
 
@@ -219,6 +224,10 @@ def parse_tasks(content: str) -> TasksParseResult:
             if current_task:
                 current_task.details = current_details
                 current_task.task_type = _detect_task_type(current_task.description, current_details)
+                # Extract file manifest from details (Requirement 2.2)
+                writes, reads = _extract_file_manifest(current_details)
+                current_task.writes = writes
+                current_task.reads = reads
                 tasks.append(current_task)
                 current_details = []
             
@@ -255,6 +264,10 @@ def parse_tasks(content: str) -> TasksParseResult:
     if current_task:
         current_task.details = current_details
         current_task.task_type = _detect_task_type(current_task.description, current_details)
+        # Extract file manifest from details (Requirement 2.2)
+        writes, reads = _extract_file_manifest(current_details)
+        current_task.writes = writes
+        current_task.reads = reads
         tasks.append(current_task)
     
     return TasksParseResult(success=len(errors) == 0, tasks=tasks, errors=errors)
@@ -307,6 +320,56 @@ def _extract_dependencies_from_details(details: List[str]) -> List[str]:
                 dependencies.extend(task_ids)
     
     return list(dict.fromkeys(dependencies))
+
+
+def _extract_file_manifest(details: List[str]) -> Tuple[List[str], List[str]]:
+    """
+    Extract file manifest (writes and reads) from task details.
+    
+    Parses _writes: and _reads: markers from task details to determine
+    which files a task will modify or read.
+    
+    Format in tasks.md:
+        - _writes: file1.py, file2.py
+        - _reads: config.json, data.csv
+    
+    Requirements: 2.2
+    
+    Args:
+        details: List of detail strings from task
+        
+    Returns:
+        Tuple of (writes, reads) - lists of file paths
+    """
+    writes: List[str] = []
+    reads: List[str] = []
+    
+    for detail in details:
+        detail_stripped = detail.strip()
+        
+        # Parse _writes: marker
+        if detail_stripped.lower().startswith('_writes:'):
+            # Extract file list after the marker
+            files_str = detail_stripped[8:].strip()  # len('_writes:') = 8
+            if files_str:
+                # Split by comma and clean up each file path
+                files = [f.strip() for f in files_str.split(',')]
+                writes.extend([f for f in files if f])
+        
+        # Parse _reads: marker
+        elif detail_stripped.lower().startswith('_reads:'):
+            # Extract file list after the marker
+            files_str = detail_stripped[7:].strip()  # len('_reads:') = 7
+            if files_str:
+                # Split by comma and clean up each file path
+                files = [f.strip() for f in files_str.split(',')]
+                reads.extend([f for f in files if f])
+    
+    # Remove duplicates while preserving order
+    writes = list(dict.fromkeys(writes))
+    reads = list(dict.fromkeys(reads))
+    
+    return writes, reads
 
 
 def _detect_circular_dependencies(graph: DependencyGraph) -> List[CircularDependencyError]:

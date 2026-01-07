@@ -7,11 +7,13 @@ Dispatches ready tasks to worker agents via codeagent-wrapper --parallel.
 - Builds task config for codeagent-wrapper
 - Invokes codeagent-wrapper synchronously
 - Processes Execution Report
+- Detects file conflicts and partitions tasks into safe batches
 
-Requirements: 1.3, 1.4, 9.1, 9.3, 9.4, 9.10
+Requirements: 1.3, 1.4, 2.3, 2.4, 2.5, 2.6, 2.7, 9.1, 9.3, 9.4, 9.10
 """
 
 import json
+import logging
 import os
 import subprocess
 import sys
@@ -23,6 +25,9 @@ from typing import List, Dict, Optional, Any, Set
 # Add script directory to path
 sys.path.insert(0, str(Path(__file__).parent))
 
+# Configure logging
+logger = logging.getLogger(__name__)
+
 
 # Agent backend mapping
 AGENT_TO_BACKEND = {
@@ -30,6 +35,163 @@ AGENT_TO_BACKEND = {
     "gemini": "gemini",
     "codex-review": "codex",
 }
+
+
+@dataclass
+class FileConflict:
+    """
+    Represents a file conflict between two tasks.
+    
+    Requirements: 2.3, 2.4
+    """
+    task_a: str
+    task_b: str
+    files: List[str]
+    conflict_type: str  # "write-write"
+    
+    def __str__(self) -> str:
+        return f"FileConflict({self.task_a} <-> {self.task_b}: {', '.join(self.files)})"
+
+
+def has_file_manifest(task: Dict[str, Any]) -> bool:
+    """
+    Check if task has a file manifest (writes or reads declared).
+    
+    Requirements: 2.5
+    """
+    return bool(task.get("writes")) or bool(task.get("reads"))
+
+
+def detect_file_conflicts(tasks: List[Dict[str, Any]]) -> List[FileConflict]:
+    """
+    Detect file write conflicts between tasks.
+    
+    Returns list of conflicts that would occur if tasks run in parallel.
+    Only detects write-write conflicts (two tasks writing to same file).
+    
+    Requirements: 2.3, 2.4
+    
+    Args:
+        tasks: List of task dictionaries with optional 'writes' field
+        
+    Returns:
+        List of FileConflict objects describing detected conflicts
+    """
+    conflicts = []
+    
+    for i, task_a in enumerate(tasks):
+        writes_a = set(task_a.get("writes") or [])
+        
+        for task_b in tasks[i+1:]:
+            writes_b = set(task_b.get("writes") or [])
+            
+            # Check write-write conflicts
+            shared_writes = writes_a & writes_b
+            if shared_writes:
+                conflicts.append(FileConflict(
+                    task_a=task_a["task_id"],
+                    task_b=task_b["task_id"],
+                    files=list(shared_writes),
+                    conflict_type="write-write"
+                ))
+    
+    return conflicts
+
+
+def partition_by_conflicts(
+    tasks: List[Dict[str, Any]],
+    log: Optional[logging.Logger] = None
+) -> List[List[Dict[str, Any]]]:
+    """
+    Partition tasks into conflict-free batches.
+    
+    Rules:
+    - Tasks with write-write conflicts are placed in separate batches
+    - Tasks without ANY file manifest (no writes AND no reads) are executed serially
+    - Tasks with only reads (no writes) can be batched with non-conflicting write tasks
+    - Tasks with non-conflicting writes can be batched together
+    
+    Batches are guaranteed to run sequentially (batch N completes before batch N+1 starts).
+    
+    Requirements: 2.3, 2.4, 2.5, 2.6, 2.7
+    
+    Args:
+        tasks: List of task dictionaries
+        log: Optional logger for warnings
+        
+    Returns:
+        List of batches, where each batch is a list of tasks safe to run in parallel
+    """
+    if log is None:
+        log = logger
+    
+    # Categorize tasks
+    no_manifest_tasks = []      # No writes AND no reads - serial for safety
+    safe_tasks = []             # Has reads only OR has writes - can check conflicts
+    
+    for task in tasks:
+        if not task.get("writes") and not task.get("reads"):
+            no_manifest_tasks.append(task)
+        else:
+            safe_tasks.append(task)
+    
+    batches: List[List[Dict[str, Any]]] = []
+    
+    # Safe tasks (with manifest): partition by write conflicts
+    if safe_tasks:
+        # Only tasks with writes can have conflicts
+        write_tasks = [t for t in safe_tasks if t.get("writes")]
+        read_only_tasks = [t for t in safe_tasks if not t.get("writes")]
+        
+        conflicts = detect_file_conflicts(write_tasks)
+        conflict_pairs: Set[tuple] = {(c.task_a, c.task_b) for c in conflicts}
+        conflict_pairs.update({(c.task_b, c.task_a) for c in conflicts})
+        
+        # Log warnings for conflicts (Req 2.7)
+        if conflicts and log:
+            for conflict in conflicts:
+                log.warning(
+                    f"File conflict detected between {conflict.task_a} and {conflict.task_b}: "
+                    f"{', '.join(conflict.files)}. Tasks will be serialized."
+                )
+        
+        # Greedy coloring to partition write tasks into non-conflicting batches
+        assigned: Set[str] = set()
+        
+        for task in write_tasks:
+            task_id = task["task_id"]
+            if task_id in assigned:
+                continue
+            
+            # Find a batch where this task has no conflicts
+            placed = False
+            for batch in batches:
+                batch_ids = {t["task_id"] for t in batch}
+                if not any((task_id, bid) in conflict_pairs for bid in batch_ids):
+                    batch.append(task)
+                    assigned.add(task_id)
+                    placed = True
+                    break
+            
+            if not placed:
+                batches.append([task])
+                assigned.add(task_id)
+        
+        # Read-only tasks can be added to any batch (no write conflicts)
+        # Add them to the first batch for maximum parallelism (Req 2.6)
+        if read_only_tasks:
+            if batches:
+                batches[0].extend(read_only_tasks)
+            else:
+                batches.append(read_only_tasks)
+    
+    # No-manifest tasks run serially (each in own batch) - conservative default (Req 2.5)
+    for task in no_manifest_tasks:
+        if log:
+            log.info(f"Task {task['task_id']} has no file manifest, executing serially for safety.")
+        batches.append([task])
+    
+    return batches
 
 
 @dataclass
@@ -324,7 +486,10 @@ def dispatch_batch(
     dry_run: bool = False
 ) -> DispatchResult:
     """
-    Dispatch ready tasks to worker agents.
+    Dispatch ready tasks to worker agents with file conflict detection.
+    
+    Tasks are partitioned into conflict-free batches and dispatched sequentially.
+    Each batch completes before the next batch starts, ensuring no file conflicts.
     
     Args:
         state_file: Path to AGENT_STATE.json
@@ -334,7 +499,7 @@ def dispatch_batch(
     Returns:
         DispatchResult with execution details
     
-    Requirements: 1.3, 1.4, 9.1, 9.3, 9.4, 9.10
+    Requirements: 1.3, 1.4, 2.3, 2.4, 2.5, 2.6, 2.7, 9.1, 9.3, 9.4, 9.10
     
     Note: Tasks are only marked in_progress after successful dispatch.
           On failure, tasks are rolled back to not_started to allow retry.
@@ -359,49 +524,91 @@ def dispatch_batch(
             tasks_dispatched=0
         )
     
-    # Build task configs
+    # Partition tasks into conflict-free batches (Req 2.3, 2.4, 2.5, 2.6, 2.7)
+    batches = partition_by_conflicts(ready_tasks, logger)
+    
+    if len(batches) > 1:
+        logger.info(f"Partitioned {len(ready_tasks)} tasks into {len(batches)} conflict-free batches")
+    
     spec_path = state.get("spec_path", ".")
     session_name = state.get("session_name", "orchestration")
-    configs = build_task_configs(ready_tasks, spec_path, workdir)
-    task_ids = [t["task_id"] for t in ready_tasks]
     
-    # Invoke codeagent-wrapper (don't update state until we know result)
-    report = invoke_codeagent_wrapper(
-        configs,
-        session_name,
-        state_file,
-        dry_run=dry_run
+    total_dispatched = 0
+    total_completed = 0
+    total_failed = 0
+    all_errors: List[str] = []
+    all_task_results: List[Dict[str, Any]] = []
+    overall_success = True
+    
+    # Dispatch batches sequentially (Req 2.3, 2.4)
+    for batch_idx, batch in enumerate(batches):
+        batch_task_ids = [t["task_id"] for t in batch]
+        
+        if len(batches) > 1:
+            logger.info(f"Dispatching batch {batch_idx + 1}/{len(batches)} with {len(batch)} tasks: {batch_task_ids}")
+        
+        # Build task configs for this batch
+        configs = build_task_configs(batch, spec_path, workdir)
+        
+        # Invoke codeagent-wrapper for this batch
+        report = invoke_codeagent_wrapper(
+            configs,
+            session_name,
+            state_file,
+            dry_run=dry_run
+        )
+        
+        total_dispatched += len(configs)
+        total_completed += report.tasks_completed
+        total_failed += report.tasks_failed
+        all_errors.extend(report.errors)
+        all_task_results.extend(report.task_results)
+        
+        # Process results for this batch
+        if not dry_run:
+            if report.success:
+                # Dispatch succeeded - update tasks to in_progress first
+                update_task_statuses(state, batch_task_ids, "in_progress")
+                # Then process individual task results
+                process_execution_report(state, report)
+            else:
+                overall_success = False
+                # Dispatch failed - ensure tasks remain in not_started for retry
+                tasks_with_results = {r.get("task_id") for r in report.task_results if r.get("task_id")}
+                
+                # Process any partial results we did get
+                if report.task_results:
+                    update_task_statuses(state, list(tasks_with_results), "in_progress")
+                    process_execution_report(state, report)
+                
+                # Log batch failure
+                logger.error(f"Batch {batch_idx + 1} failed: {report.errors}")
+            
+            # Save state after each batch
+            save_agent_state(state_file, state)
+        
+        # If batch failed, we might want to stop (but continue for now to process all batches)
+        # Future enhancement: add option to stop on first failure
+    
+    # Build combined execution report
+    combined_report = ExecutionReport(
+        success=overall_success,
+        tasks_completed=total_completed,
+        tasks_failed=total_failed,
+        task_results=all_task_results,
+        errors=all_errors
     )
     
-    # Process results based on success/failure
-    if not dry_run:
-        if report.success:
-            # Dispatch succeeded - update tasks to in_progress first
-            update_task_statuses(state, task_ids, "in_progress")
-            # Then process individual task results
-            process_execution_report(state, report)
-        else:
-            # Dispatch failed - ensure tasks remain in not_started for retry
-            # Only rollback tasks that don't have results (complete failure)
-            tasks_with_results = {r.get("task_id") for r in report.task_results if r.get("task_id")}
-            tasks_to_rollback = [tid for tid in task_ids if tid not in tasks_with_results]
-            
-            # Process any partial results we did get
-            if report.task_results:
-                update_task_statuses(state, list(tasks_with_results), "in_progress")
-                process_execution_report(state, report)
-            
-            # Tasks without results stay as not_started (no change needed since we
-            # didn't update them yet)
-        
-        save_agent_state(state_file, state)
+    message = f"Dispatched {total_dispatched} tasks in {len(batches)} batch(es)"
+    if not overall_success:
+        message = f"Dispatch partially failed: {total_completed} completed, {total_failed} failed"
     
     return DispatchResult(
-        success=report.success,
-        message=f"Dispatched {len(configs)} tasks" if report.success else f"Dispatch failed for {len(configs)} tasks",
-        tasks_dispatched=len(configs),
-        execution_report=report,
-        errors=report.errors
+        success=overall_success,
+        message=message,
+        tasks_dispatched=total_dispatched,
+        execution_report=combined_report,
+        errors=all_errors
     )
 
 
