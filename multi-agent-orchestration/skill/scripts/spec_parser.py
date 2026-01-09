@@ -235,8 +235,12 @@ def _detect_task_type(description: str, details: List[str]) -> TaskType:
 
 
 def _parse_task_line(line: str) -> Tuple[Optional[str], TaskStatus, bool, str]:
-    """Parse a task line to extract task ID, status, optional flag, and description."""
-    pattern = r'^[-*]\s*\[([xX\s~-])\](\*)?\s*(\d+\.?\d*\.?)\s+(.+)$'
+    """Parse a task line to extract task ID, status, optional flag, and description.
+    
+    Supports nested task IDs of any depth (e.g., 1, 1.1, 1.1.1, 1.1.1.1).
+    """
+    # Pattern supports task IDs like: 1, 1.1, 1.1.1, 1.1.1.1, etc.
+    pattern = r'^[-*]\s*\[([xX\s~-])\](\*)?\s*(\d+(?:\.\d+)*)\s+(.+)$'
     match = re.match(pattern, line.strip())
     
     if not match:
@@ -257,6 +261,12 @@ def parse_tasks(content: str) -> TasksParseResult:
     """
     Parse tasks.md content and extract task definitions.
     
+    Uses two-pass parsing to handle parent-subtask relationships correctly
+    regardless of order in the file (Requirement 14.1, 14.2, 14.3, 14.4).
+    
+    Pass 1: Collect all tasks with their basic properties
+    Pass 2: Build parent-subtask relationships
+    
     Args:
         content: Markdown content of tasks.md
         
@@ -271,6 +281,9 @@ def parse_tasks(content: str) -> TasksParseResult:
     current_details: List[str] = []
     line_num = 0
     
+    # ========================================================================
+    # Pass 1: Collect all tasks with basic properties
+    # ========================================================================
     for line in lines:
         line_num += 1
         stripped = line.strip()
@@ -304,14 +317,12 @@ def parse_tasks(content: str) -> TasksParseResult:
                 is_optional=is_optional,
             )
             
-            # Set parent for subtasks (e.g., 1.1 -> parent is 1)
+            # Set parent_id for subtasks (e.g., 1.1 -> parent is 1, 1.1.1 -> parent is 1.1)
+            # Note: We only set parent_id here, subtasks list is built in Pass 2
             if '.' in task_id:
-                parent_id = task_id.split('.')[0]
-                current_task.parent_id = parent_id
-                for t in tasks:
-                    if t.task_id == parent_id:
-                        t.subtasks.append(task_id)
-                        break
+                # Find the immediate parent (e.g., 1.1.1 -> 1.1, 1.1 -> 1)
+                parts = task_id.rsplit('.', 1)
+                current_task.parent_id = parts[0]
         
         elif current_task and stripped.startswith('-'):
             current_details.append(stripped[1:].strip())
@@ -329,7 +340,42 @@ def parse_tasks(content: str) -> TasksParseResult:
         current_task.reads = reads
         tasks.append(current_task)
     
+    # ========================================================================
+    # Pass 2: Build parent-subtask relationships (order-independent)
+    # Requirement 14.1, 14.2, 14.3, 14.4
+    # ========================================================================
+    _build_parent_subtask_relationships(tasks)
+    
     return TasksParseResult(success=len(errors) == 0, tasks=tasks, errors=errors)
+
+
+def _build_parent_subtask_relationships(tasks: List[Task]) -> None:
+    """
+    Build parent-subtask relationships from parsed tasks.
+    
+    This is a post-processing step that links subtasks to their parents
+    regardless of the order they appear in tasks.md.
+    
+    Handles nested subtasks (e.g., 1.1.1 is a subtask of 1.1, which is a subtask of 1).
+    
+    Requirements: 14.1, 14.2, 14.3, 14.4
+    
+    Args:
+        tasks: List of parsed Task objects (modified in place)
+    """
+    # Build task_id -> Task mapping
+    task_map: Dict[str, Task] = {t.task_id: t for t in tasks}
+    
+    # Clear any existing subtasks lists (in case of re-processing)
+    for task in tasks:
+        task.subtasks = []
+    
+    # For each task with a parent_id, add it to the parent's subtasks list
+    for task in tasks:
+        if task.parent_id:
+            parent = task_map.get(task.parent_id)
+            if parent:
+                parent.subtasks.append(task.task_id)
 
 
 def validate_spec_directory(spec_path: str) -> ValidationResult:

@@ -130,3 +130,70 @@ These fixes are essential for production-ready orchestration that maintains corr
 3. THE System SHALL call update_parent_statuses at the end of every dispatch cycle regardless of what was dispatched
 4. WHEN update_parent_statuses is called, THE System SHALL persist the updated statuses to AGENT_STATE
 
+### Requirement 9: Go/Python State Model Consistency
+
+**User Story:** As an orchestrator, I want the Go wrapper to preserve all task fields when writing results, so that orchestration metadata is not lost during execution.
+
+#### Acceptance Criteria
+
+1. WHEN WriteTaskResult() is called, THE System SHALL merge execution results with existing task fields
+2. THE System SHALL preserve owner_agent, dependencies, subtasks, writes, reads, parent_id fields
+3. THE System SHALL preserve fix_attempts, escalated, review_history fields
+4. THE System SHALL NOT overwrite the entire task record, only update execution-specific fields
+5. WHEN reading AGENT_STATE, THE Go wrapper SHALL parse all task fields defined in the schema
+
+### Requirement 10: Go/Python JSON Output Compatibility
+
+**User Story:** As an orchestrator, I want the Go wrapper output to be parseable by Python scripts, so that execution results can be processed correctly.
+
+#### Acceptance Criteria
+
+1. THE ExecutionReport JSON output SHALL include fields expected by dispatch_batch.py (tasks_completed, task_results)
+2. THE ExecutionReport JSON output SHALL include fields expected by dispatch_reviews.py (reviews_completed, review_results)
+3. WHEN Python scripts parse Go wrapper output, THE System SHALL correctly extract task status and output
+4. THE System SHALL document the JSON schema used for Go/Python communication
+
+### Requirement 11: Cross-Batch Dependency Window Tracking
+
+**User Story:** As an orchestrator, I want dependency windows to be tracked across batches, so that cross-batch dependencies can be resolved correctly.
+
+#### Acceptance Criteria
+
+1. WHEN a task depends on a task from a previous batch, THE System SHALL find the dependency's tmux window
+2. THE System SHALL persist window-to-task mappings across batch executions
+3. WHEN a dependency window is not found in current batch, THE System SHALL query tmux for existing windows
+4. THE System SHALL NOT fail with "dependency window not found" for valid cross-batch dependencies
+
+### Requirement 12: Fix Loop Trigger Timing
+
+**User Story:** As an orchestrator, I want the fix loop to be triggered at the documented time, so that the workflow matches documentation.
+
+#### Acceptance Criteria
+
+1. THE documentation SHALL accurately describe when fix loop is triggered
+2. IF documentation says "review major/critical goes directly to fix loop", THEN dispatch_reviews.py SHALL trigger fix loop
+3. IF fix loop is triggered in consolidate phase, THEN documentation SHALL reflect this
+4. THE flow diagram SHALL match the actual implementation
+
+### Requirement 13: Dependency Completion Semantics
+
+**User Story:** As an orchestrator, I want clear semantics for when a dependency is considered complete, so that downstream tasks don't start prematurely.
+
+#### Acceptance Criteria
+
+1. THE System SHALL define which statuses satisfy a dependency (completed only, or also review states)
+2. IF pending_review/under_review/final_review satisfy dependencies, THEN documentation SHALL explain the rationale
+3. IF only completed status satisfies dependencies, THEN dispatch_batch.py SHALL be updated accordingly
+4. WHEN a task enters fix_required, THE System SHALL re-evaluate downstream task readiness
+
+### Requirement 14: Order-Independent Subtask Parsing
+
+**User Story:** As an orchestrator, I want subtasks to be correctly linked to parents regardless of order in tasks.md, so that task file organization is flexible.
+
+#### Acceptance Criteria
+
+1. WHEN a subtask appears before its parent in tasks.md, THE System SHALL correctly link them
+2. THE System SHALL use two-pass parsing or post-processing to build parent-subtask relationships
+3. THE System SHALL NOT require parent tasks to appear before subtasks in the file
+4. WHEN nested subtasks (e.g., 1.1.1) appear in any order, THE System SHALL correctly build the hierarchy
+

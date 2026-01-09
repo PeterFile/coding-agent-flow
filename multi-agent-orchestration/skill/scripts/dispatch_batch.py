@@ -10,8 +10,9 @@ Dispatches ready tasks to worker agents via codeagent-wrapper --parallel.
 - Detects file conflicts and partitions tasks into safe batches
 - Filters out parent tasks (only leaf tasks are dispatched)
 - Expands parent task dependencies to subtasks
+- Uses strict dependency completion (only 'completed' status satisfies dependencies)
 
-Requirements: 1.1, 1.2, 1.3, 1.4, 1.6, 1.7, 2.3, 2.4, 2.5, 2.6, 2.7, 9.1, 9.3, 9.4, 9.10
+Requirements: 1.1, 1.2, 1.3, 1.4, 1.6, 1.7, 2.3, 2.4, 2.5, 2.6, 2.7, 9.1, 9.3, 9.4, 9.10, 13.1, 13.3, 13.4
 """
 
 import json
@@ -263,14 +264,42 @@ def save_agent_state(state_file: str, state: Dict[str, Any]) -> None:
     os.replace(tmp_file, state_file)
 
 
-def get_completed_task_ids(state: Dict[str, Any]) -> Set[str]:
-    """Get set of completed task IDs"""
+def get_completed_task_ids(state: Dict[str, Any], strict: bool = True) -> Set[str]:
+    """
+    Get set of task IDs that satisfy dependencies.
+    
+    Args:
+        state: The AGENT_STATE dictionary
+        strict: If True (default), only 'completed' status satisfies dependencies.
+                If False, also includes 'pending_review', 'under_review', 'final_review'.
+    
+    Returns:
+        Set of task IDs that are considered "complete" for dependency purposes.
+    
+    Requirements: 13.1, 13.3, 13.4
+    
+    Rationale for strict=True default:
+    - Prevents downstream tasks from starting before review passes
+    - If a task enters fix_required, downstream tasks haven't started yet
+    - Ensures fix loop doesn't cause cascading issues with already-started tasks
+    - More conservative approach that maintains correctness
+    
+    When strict=False might be used:
+    - Legacy compatibility
+    - When review is expected to always pass (low-risk changes)
+    - When parallelism is more important than strict correctness
+    """
     completed = set()
     for task in state.get("tasks", []):
         status = task.get("status", "")
-        # Consider completed, pending_review, under_review, final_review as "done" for dependency purposes
-        if status in ["completed", "pending_review", "under_review", "final_review"]:
-            completed.add(task["task_id"])
+        if strict:
+            # Only 'completed' status satisfies dependencies (Req 13.3)
+            if status == "completed":
+                completed.add(task["task_id"])
+        else:
+            # Legacy behavior: review states also satisfy dependencies
+            if status in ["completed", "pending_review", "under_review", "final_review"]:
+                completed.add(task["task_id"])
     return completed
 
 
@@ -291,7 +320,7 @@ def _dict_to_task_like(task_dict: Dict[str, Any]) -> Any:
     return TaskLike(task_dict)
 
 
-def get_ready_tasks(state: Dict[str, Any]) -> List[Dict[str, Any]]:
+def get_ready_tasks(state: Dict[str, Any], strict_dependencies: bool = True) -> List[Dict[str, Any]]:
     """
     Get leaf tasks ready for execution (no unmet dependencies).
     
@@ -301,9 +330,14 @@ def get_ready_tasks(state: Dict[str, Any]) -> List[Dict[str, Any]]:
     3. All dependencies must be satisfied (including expanded parent deps) - Req 1.6, 1.7
     4. Optional tasks are skipped
     
-    Requirements: 1.1, 1.2, 1.3, 1.6, 1.7
+    Args:
+        state: The AGENT_STATE dictionary
+        strict_dependencies: If True (default), only 'completed' status satisfies dependencies.
+                            If False, also includes review states (legacy behavior).
+    
+    Requirements: 1.1, 1.2, 1.3, 1.6, 1.7, 13.3, 13.4
     """
-    completed = get_completed_task_ids(state)
+    completed = get_completed_task_ids(state, strict=strict_dependencies)
     ready = []
     
     # Build task map for dependency expansion

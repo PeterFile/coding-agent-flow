@@ -1033,3 +1033,248 @@ def test_property_8_completed_is_terminal(from_status):
         for to_status in VALID_TRANSITIONS.keys():
             assert not validate_transition("completed", to_status), \
                 f"completed -> {to_status} should be invalid"
+
+
+# ============================================================================
+# Tests for Order-Independent Subtask Parsing
+# Feature: orchestration-fixes
+# Validates: Requirements 14.1, 14.2, 14.3, 14.4
+# ============================================================================
+
+
+def test_subtask_before_parent_linked_correctly():
+    """
+    Test that subtasks defined before their parent are correctly linked.
+    
+    Validates: Requirement 14.1
+    """
+    # Subtask 1.1 appears BEFORE parent task 1
+    content = """# Tasks
+
+- [ ] 1.1 First subtask
+- [ ] 1.2 Second subtask
+- [ ] 1 Parent task
+"""
+    result = parse_tasks(content)
+    
+    assert result.success, f"Parse failed: {result.errors}"
+    assert len(result.tasks) == 3
+    
+    # Find tasks by ID
+    task_map = {t.task_id: t for t in result.tasks}
+    
+    # Parent task should have both subtasks
+    parent = task_map["1"]
+    assert "1.1" in parent.subtasks, "Parent should have subtask 1.1"
+    assert "1.2" in parent.subtasks, "Parent should have subtask 1.2"
+    assert len(parent.subtasks) == 2
+    
+    # Subtasks should have correct parent_id
+    assert task_map["1.1"].parent_id == "1"
+    assert task_map["1.2"].parent_id == "1"
+
+
+def test_nested_subtasks_any_order():
+    """
+    Test that nested subtasks (e.g., 1.1.1) are correctly linked regardless of order.
+    
+    Validates: Requirements 14.3, 14.4
+    """
+    # Deeply nested subtask appears first, then intermediate, then parent
+    content = """# Tasks
+
+- [ ] 1.1.1 Deeply nested subtask
+- [ ] 1.1 Intermediate subtask
+- [ ] 1 Top-level parent
+"""
+    result = parse_tasks(content)
+    
+    assert result.success, f"Parse failed: {result.errors}"
+    assert len(result.tasks) == 3
+    
+    task_map = {t.task_id: t for t in result.tasks}
+    
+    # Top-level parent should have 1.1 as subtask
+    top_parent = task_map["1"]
+    assert "1.1" in top_parent.subtasks, "Task 1 should have subtask 1.1"
+    assert len(top_parent.subtasks) == 1
+    
+    # Intermediate task should have 1.1.1 as subtask
+    intermediate = task_map["1.1"]
+    assert intermediate.parent_id == "1"
+    assert "1.1.1" in intermediate.subtasks, "Task 1.1 should have subtask 1.1.1"
+    assert len(intermediate.subtasks) == 1
+    
+    # Deeply nested task should have correct parent
+    deep = task_map["1.1.1"]
+    assert deep.parent_id == "1.1"
+    assert len(deep.subtasks) == 0  # Leaf task
+
+
+def test_mixed_order_multiple_parents():
+    """
+    Test multiple parent tasks with subtasks in mixed order.
+    
+    Validates: Requirements 14.1, 14.2
+    """
+    content = """# Tasks
+
+- [ ] 2.1 Subtask of 2
+- [ ] 1.1 Subtask of 1
+- [ ] 1 First parent
+- [ ] 2.2 Another subtask of 2
+- [ ] 2 Second parent
+- [ ] 1.2 Another subtask of 1
+"""
+    result = parse_tasks(content)
+    
+    assert result.success
+    assert len(result.tasks) == 6
+    
+    task_map = {t.task_id: t for t in result.tasks}
+    
+    # Parent 1 should have subtasks 1.1 and 1.2
+    parent1 = task_map["1"]
+    assert set(parent1.subtasks) == {"1.1", "1.2"}
+    
+    # Parent 2 should have subtasks 2.1 and 2.2
+    parent2 = task_map["2"]
+    assert set(parent2.subtasks) == {"2.1", "2.2"}
+    
+    # All subtasks should have correct parent_id
+    assert task_map["1.1"].parent_id == "1"
+    assert task_map["1.2"].parent_id == "1"
+    assert task_map["2.1"].parent_id == "2"
+    assert task_map["2.2"].parent_id == "2"
+
+
+def test_parent_before_subtasks_still_works():
+    """
+    Test that normal order (parent before subtasks) still works correctly.
+    
+    Validates: Requirement 14.2 (two-pass parsing doesn't break normal case)
+    """
+    content = """# Tasks
+
+- [ ] 1 Parent task
+- [ ] 1.1 First subtask
+- [ ] 1.2 Second subtask
+"""
+    result = parse_tasks(content)
+    
+    assert result.success
+    assert len(result.tasks) == 3
+    
+    task_map = {t.task_id: t for t in result.tasks}
+    
+    parent = task_map["1"]
+    assert set(parent.subtasks) == {"1.1", "1.2"}
+    assert task_map["1.1"].parent_id == "1"
+    assert task_map["1.2"].parent_id == "1"
+
+
+def test_orphan_subtask_no_parent():
+    """
+    Test that subtasks without a parent in the file still have parent_id set.
+    
+    This tests the case where a subtask references a parent that doesn't exist.
+    """
+    content = """# Tasks
+
+- [ ] 1.1 Orphan subtask (parent 1 not defined)
+- [ ] 2 Some other task
+"""
+    result = parse_tasks(content)
+    
+    assert result.success
+    assert len(result.tasks) == 2
+    
+    task_map = {t.task_id: t for t in result.tasks}
+    
+    # Subtask should still have parent_id set
+    orphan = task_map["1.1"]
+    assert orphan.parent_id == "1"
+    
+    # But since parent doesn't exist, it won't be in any subtasks list
+    # Task 2 should have no subtasks
+    assert len(task_map["2"].subtasks) == 0
+
+
+def test_deeply_nested_hierarchy_any_order():
+    """
+    Test deeply nested hierarchy (3+ levels) in any order.
+    
+    Validates: Requirement 14.4
+    """
+    content = """# Tasks
+
+- [ ] 1.1.1.1 Level 4 task
+- [ ] 1.1.1 Level 3 task
+- [ ] 1.1 Level 2 task
+- [ ] 1 Level 1 task (root)
+"""
+    result = parse_tasks(content)
+    
+    assert result.success
+    assert len(result.tasks) == 4
+    
+    task_map = {t.task_id: t for t in result.tasks}
+    
+    # Check hierarchy
+    assert task_map["1"].subtasks == ["1.1"]
+    assert task_map["1.1"].subtasks == ["1.1.1"]
+    assert task_map["1.1.1"].subtasks == ["1.1.1.1"]
+    assert task_map["1.1.1.1"].subtasks == []
+    
+    # Check parent_ids
+    assert task_map["1"].parent_id is None
+    assert task_map["1.1"].parent_id == "1"
+    assert task_map["1.1.1"].parent_id == "1.1"
+    assert task_map["1.1.1.1"].parent_id == "1.1.1"
+
+
+def test_is_leaf_task_with_out_of_order_parsing():
+    """
+    Test that is_leaf_task works correctly after out-of-order parsing.
+    """
+    from spec_parser import is_leaf_task
+    
+    content = """# Tasks
+
+- [ ] 1.1 Subtask first
+- [ ] 1 Parent second
+"""
+    result = parse_tasks(content)
+    task_map = {t.task_id: t for t in result.tasks}
+    
+    # Parent should NOT be a leaf task
+    assert not is_leaf_task(task_map["1"]), "Parent should not be a leaf task"
+    
+    # Subtask should be a leaf task
+    assert is_leaf_task(task_map["1.1"]), "Subtask should be a leaf task"
+
+
+def test_get_ready_tasks_with_out_of_order_parsing():
+    """
+    Test that get_ready_tasks works correctly after out-of-order parsing.
+    """
+    from spec_parser import get_ready_tasks
+    
+    content = """# Tasks
+
+- [ ] 1.1 Subtask first
+- [ ] 1.2 Another subtask
+- [ ] 1 Parent second
+"""
+    result = parse_tasks(content)
+    
+    # Get ready tasks - should only return leaf tasks
+    ready = get_ready_tasks(result.tasks, set())
+    ready_ids = {t.task_id for t in ready}
+    
+    # Parent should NOT be in ready tasks
+    assert "1" not in ready_ids, "Parent should not be in ready tasks"
+    
+    # Subtasks should be in ready tasks
+    assert "1.1" in ready_ids, "Subtask 1.1 should be in ready tasks"
+    assert "1.2" in ready_ids, "Subtask 1.2 should be in ready tasks"

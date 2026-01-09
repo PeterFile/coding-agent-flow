@@ -253,10 +253,79 @@ Implementation uses Python for orchestration scripts (consistent with existing c
   - Verify dispatch failure rolls back status correctly
   - Verify update_parent_statuses runs in all dispatch paths
 
+- [x] 13. Fix Go/Python Interface Inconsistencies (Critical)
+  - [x] 13.1 Fix AGENT_STATE model inconsistency in state.go
+    - **Issue**: `TaskResultState` in `state.go` only has execution result fields (`task_id`, `status`, `output`, `error`), but Python scripts expect `owner_agent`, `dependencies`, `subtasks`, `writes`, `reads`, `parent_id`, `fix_attempts`
+    - **Root Cause**: `WriteTaskResult()` overwrites entire task record, losing orchestration fields
+    - **Fix**: Change `WriteTaskResult()` to merge/update only execution fields, preserving existing orchestration fields
+    - _writes: codeagent-wrapper/state.go_
+
+  - [x] 13.2 Fix JSON output field mismatch in report.go
+    - **Issue**: `ExecutionReport` outputs `summary` and `tasks`, but `dispatch_batch.py` expects `tasks_completed`/`task_results`, and `dispatch_reviews.py` expects `reviews_completed`/`review_results`
+    - **Root Cause**: Go wrapper and Python scripts use different JSON schemas
+    - **Fix Option A**: Update `report.go` to output fields expected by Python scripts
+    - **Fix Option B**: Update Python scripts to parse the actual Go output format
+    - _writes: codeagent-wrapper/report.go OR skills/multi-agent-orchestrator/scripts/dispatch_batch.py, skills/multi-agent-orchestrator/scripts/dispatch_reviews.py_
+
+  - [x] 13.3 Write integration test for Go/Python state round-trip
+    - Test that task fields survive Go wrapper execution
+    - Test that Python scripts can parse Go wrapper output
+    - Verify `owner_agent`, `dependencies`, `subtasks`, `writes`, `reads` are preserved
+
+- [x] 14. Fix Cross-Batch Dependency Window Lookup (High)
+  - [x] 14.1 Fix dependency window lookup in tmux_execution.go
+    - **Issue**: Line 62 only looks up `windowByTask` in current batch, cross-batch dependencies fail with "dependency window not found"
+    - **Root Cause**: `windowByTask` map is scoped to current batch, not persisted across batches
+    - **Fix**: Persist window mappings across batches or query tmux for existing windows
+    - _writes: codeagent-wrapper/tmux_execution.go_
+
+  - [x] 14.2 Update documentation to clarify dependency batch requirements
+    - Clarify that dependencies must be in same batch OR use persistent window tracking
+    - _writes: docs/multi-agent-orchestration-workflow-simulation.md_
+
+- [x] 15. Fix Fix-Loop Trigger Flow (Medium)
+  - [x] 15.1 Align fix loop trigger with documentation
+    - **Issue**: Documentation says "review major/critical goes directly to fix loop", but implementation only triggers `enter_fix_loop()` in `consolidate_reviews.py`, not during review dispatch
+    - **Root Cause**: Flow diagram and documentation don't match implementation
+    - **Fix Option A**: Update `dispatch_reviews.py` to trigger fix loop immediately on critical/major
+    - **Fix Option B**: Update documentation to reflect that fix loop is triggered in consolidate phase
+    - _writes: skills/multi-agent-orchestrator/scripts/dispatch_reviews.py OR docs/multi-agent-orchestration-workflow-simulation.md_
+
+- [x] 16. Fix Dependency Completion Criteria (Medium)
+  - [x] 16.1 Fix premature dependency completion in dispatch_batch.py
+    - **Issue**: Line 266 treats `pending_review`, `under_review`, `final_review` as "completed" for dependency purposes
+    - **Root Cause**: Allows downstream tasks to start before review passes, causing issues if fix loop is triggered
+    - **Fix**: Only treat `completed` status as satisfying dependencies, or add configuration option
+    - _writes: skills/multi-agent-orchestrator/scripts/dispatch_batch.py_
+
+  - [x] 16.2 Update documentation to clarify dependency completion semantics
+    - Document when a task is considered "complete" for dependency purposes
+    - _writes: docs/multi-agent-orchestration-workflow-simulation.md_
+
+- [x] 17. Fix Subtask Mounting Order Dependency (Low)
+  - [x] 17.1 Fix subtask parsing order in spec_parser.py
+    - **Issue**: Line 307 requires parent task to appear before subtasks in tasks.md, otherwise parent won't have subtasks in its list
+    - **Root Cause**: Single-pass parsing assumes parent is already parsed when subtask is encountered
+    - **Fix**: Use two-pass parsing: first pass collects all tasks, second pass builds parent-subtask relationships
+    - _writes: skills/multi-agent-orchestrator/scripts/spec_parser.py_
+
+  - [x] 17.2 Write test for out-of-order subtask parsing
+    - Test that subtasks defined before parent are correctly linked
+    - Test nested subtasks in any order
+
+- [x] 18. Checkpoint - Verify all interface issues resolved
+  - Run all tests including new integration tests
+  - Verify Go/Python state round-trip works correctly
+  - Verify cross-batch dependencies work
+  - Verify fix loop triggers at correct time
+  - Verify dependency completion criteria is correct
+  - Verify subtask parsing order is independent
+
 ## Notes
 
 - Implementation uses Python with hypothesis for property-based testing
 - All changes are to existing files in `skills/multi-agent-orchestrator/scripts/`
 - New `fix_loop.py` module contains fix loop specific logic
 - Property tests should run minimum 100 iterations
+- Tasks 13-18 address Go/Python interface issues identified in audit
 

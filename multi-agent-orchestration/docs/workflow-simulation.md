@@ -49,6 +49,50 @@ Task 3 depends on [Task 2.1, Task 2.2]
 This ensures Task 3 waits for **ALL** subtasks of Task 2 to complete.
 
 
+### Dependency Completion Semantics
+
+A dependency is considered **satisfied** only when the upstream task reaches `completed` status.
+
+**Important:** Tasks in review states (`pending_review`, `under_review`, `final_review`) do **NOT** satisfy dependencies.
+
+| Upstream Task Status | Dependency Satisfied? |
+|---------------------|----------------------|
+| `completed` | ✅ Yes |
+| `pending_review` | ❌ No |
+| `under_review` | ❌ No |
+| `final_review` | ❌ No |
+| `fix_required` | ❌ No |
+| `in_progress` | ❌ No |
+| `blocked` | ❌ No |
+| `not_started` | ❌ No |
+
+**Rationale:**
+- Prevents downstream tasks from starting before review passes
+- If a task enters `fix_required`, downstream tasks haven't started yet
+- Ensures fix loop doesn't cause cascading issues with already-started tasks
+- More conservative approach that maintains correctness
+
+**Example Scenario:**
+```
+Task 2.1 completes execution → status: pending_review
+Task 2.2 depends on 2.1     → NOT ready (2.1 not completed)
+Task 2.1 review passes      → status: completed
+Task 2.2 depends on 2.1     → READY (2.1 completed)
+```
+
+**Fix Loop Interaction:**
+```
+Task 2.1 completes execution → status: pending_review
+Task 2.2 depends on 2.1     → NOT ready (waiting)
+Task 2.1 review fails       → status: fix_required
+Task 2.2 depends on 2.1     → Still NOT ready (correct behavior!)
+Task 2.1 fix succeeds       → status: completed
+Task 2.2 depends on 2.1     → READY (can now start)
+```
+
+This strict dependency completion semantics ensures that if a task enters the fix loop, no downstream tasks have been started yet, preventing cascading failures.
+
+
 ## Execution State Machine
 
 ### Task Status Flow (Extended with Fix Loop)
@@ -174,7 +218,17 @@ Batch 3: [E]    ─── serial (no manifest) ──► complete
 
 ### Overview
 
-When a review finds **critical** or **major** issues, the task enters a fix loop:
+When a review finds **critical** or **major** issues, the task enters a fix loop.
+
+**Trigger Timing:** The fix loop is triggered during the **review consolidation phase** (in `consolidate_reviews.py`), NOT during review dispatch. The flow is:
+
+1. `dispatch_reviews.py` - Dispatches review tasks to reviewers
+2. Reviews complete and findings are collected
+3. `consolidate_reviews.py` - Consolidates all review findings for a task
+4. If overall severity is **critical** or **major**, `enter_fix_loop()` is called
+5. Task status changes to `fix_required` and dependent tasks are blocked
+
+This ensures all reviews are complete before determining if fixes are needed:
 
 ```
 Review Fails (critical/major)
@@ -238,6 +292,62 @@ Block: Task 4 (depends on Task 2 and Task 3)
 ```
 
 When fix loop succeeds, blocked tasks are **unblocked** and become ready.
+
+### Review Cycle Flow
+
+The review cycle shows how reviews are processed and how fix loop is triggered:
+
+```mermaid
+flowchart TB
+    Start([Task Completes])
+    
+    subgraph ReviewDispatch["1. Review Dispatch"]
+        Pending[Task: pending_review]
+        DispatchReview[dispatch_reviews.py]
+        UnderReview[Task: under_review]
+        
+        Pending --> DispatchReview
+        DispatchReview --> UnderReview
+    end
+    
+    subgraph ReviewExec["2. Review Execution"]
+        Reviewers[Codex Reviewers]
+        Findings[Review Findings]
+        
+        Reviewers --> Findings
+    end
+    
+    subgraph Consolidate["3. Review Consolidation"]
+        FinalReview[Task: final_review]
+        Consolidator[consolidate_reviews.py]
+        CheckSeverity{Overall Severity?}
+        
+        FinalReview --> Consolidator
+        Consolidator --> CheckSeverity
+    end
+    
+    subgraph FixLoopEntry["4. Fix Loop Entry"]
+        EnterFix[enter_fix_loop]
+        FixRequired[Task: fix_required]
+        BlockDeps[Block Dependent Tasks]
+        
+        EnterFix --> FixRequired
+        FixRequired --> BlockDeps
+    end
+    
+    UnderReview --> Reviewers
+    Findings --> FinalReview
+    CheckSeverity -->|none/minor| Complete([Task: completed])
+    CheckSeverity -->|critical/major| EnterFix
+    BlockDeps --> ProcessFix([Process in next dispatch cycle])
+```
+
+**Key Points:**
+- Fix loop is triggered in `consolidate_reviews.py`, not `dispatch_reviews.py`
+- All reviews must complete before consolidation determines overall severity
+- Only critical/major severity triggers fix loop entry
+- Dependent tasks are blocked immediately upon fix loop entry
+
 
 
 ## Workflow Simulation
@@ -506,6 +616,41 @@ EOF
 ```
 
 **Key Insight:** Task 2.2 runs in a **pane** within Task 2.1's window because it has a dependency on 2.1.
+
+### Cross-Batch Dependency Window Tracking
+
+When tasks span multiple batches, the system uses **persistent window mapping** to resolve cross-batch dependencies:
+
+**How It Works:**
+1. When a task completes, its `window_id` is stored in `AGENT_STATE.json` under `window_mapping`
+2. When a new batch starts, tasks with dependencies first check the local batch's window map
+3. If not found locally, the system queries the persisted `window_mapping` from AGENT_STATE
+4. This allows dependent tasks in later batches to find their dependency's tmux window
+
+**Example Scenario:**
+```
+Batch 1: Task 2.1 executes → window_mapping["2.1"] = "task-2.1" (persisted)
+Batch 2: Task 2.2 depends on 2.1
+         → Local map: not found
+         → Persisted map: found "task-2.1"
+         → Creates pane in "task-2.1" window
+```
+
+**State After Batch 1:**
+```json
+{
+  "window_mapping": {
+    "1": "task-1",
+    "2.1": "task-2.1"
+  }
+}
+```
+
+**Key Points:**
+- Window mappings persist across batches in AGENT_STATE.json
+- Local batch mappings take precedence over persisted mappings
+- If a dependency window is not found in either location, the task fails with "dependency window not found"
+- This enables proper tmux pane grouping even when dependencies complete in earlier batches
 
 
 ### Phase 4: Fix Loop Simulation (Task 2.2 Review Fails)
